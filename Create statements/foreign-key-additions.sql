@@ -1,0 +1,20 @@
+ALTER TABLE usertable ADD FOREIGN KEY (UserTypeID) REFERENCES usertype(UserTypeID);
+ALTER TABLE usertable ADD FOREIGN KEY (GenderID) REFERENCES gender(GenderID);
+ALTER TABLE distance ADD FOREIGN KEY (UserID) REFERENCES usertable(UserID);
+ALTER TABLE UserActivities ADD FOREIGN KEY (UserID) REFERENCES usertable(UserID);
+ALTER TABLE UserActivities ADD FOREIGN KEY (ActivityID) REFERENCES activities(ActivitiesID);
+ALTER TABLE recent_locations ADD FOREIGN KEY (UserID) REFERENCES usertable(UserID);
+ALTER TABLE reviews ADD FOREIGN KEY (ReviewerID) REFERENCES usertable(UserID);
+ALTER TABLE reviews ADD FOREIGN KEY (RevieweeID) REFERENCES usertable(UserID);
+ALTER TABLE reviews ADD FOREIGN KEY (ReviewID) REFERENCES userreview(UserReviewID);
+ALTER TABLE reportedusers ADD FOREIGN KEY (AdminID) REFERENCES admins(AdminID);
+ALTER TABLE reportedusers ADD FOREIGN KEY (ReportedID) REFERENCES reports(UserReportedID);
+ALTER TABLE reports ADD FOREIGN KEY (ReportedUserID) REFERENCES usertable(UserID);
+ALTER TABLE reports ADD FOREIGN KEY (ReporteeUserID) REFERENCES usertable(UserID);
+ALTER TABLE sendconnectionrequest ADD FOREIGN KEY (SCRID) REFERENCES connectionrequest(ConnectionReqID);
+ALTER TABLE sendconnectionrequest ADD FOREIGN KEY (ConnectorUser) REFERENCES usertable(UserID);
+ALTER TABLE sendconnectionrequest ADD FOREIGN KEY (ConnecteeUser) REFERENCES usertable(UserID);
+ALTER TABLE connections_cid ADD FOREIGN KEY (cID) REFERENCES connections(ConnectionID);
+ALTER TABLE connections_cid ADD FOREIGN KEY (User1) REFERENCES usertable(UserID);
+ALTER TABLE connections_cid ADD FOREIGN KEY (User2) REFERENCES usertable(UserID);
+
