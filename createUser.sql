@@ -6,7 +6,7 @@ BEGIN
 	DECLARE foundEntry INT DEFAULT 0;
 
 	SELECT count(*) INTO foundEntry from activities_app.usertable 
-	WHERE activities_app.usertable = uname;
+	WHERE usertable.UserName = uname;
 
 	IF foundEntry >  0 THEN
 		SIGNAL SQLSTATE '45000'
