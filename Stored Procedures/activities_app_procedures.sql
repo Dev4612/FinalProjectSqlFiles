@@ -128,20 +128,30 @@ BEGIN
     SELECT UserID into userMID FROM usertable AS u WHERE u.UserName = uname;
     
     (SELECT 
-		u.UserName, distance.Distance 
+		u.UserName, di.Distance, rl.Latitude, 
+        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
 	FROM 
 		usertable AS u 
-		JOIN distance ON u.UserID = distance.UserID
+		JOIN recent_locations AS rl ON u.UserID = rl.UserID
+        JOIN distance AS di ON u.UserID = di.UserID
+        JOIN UserActivities AS ua ON u.UserID = ua.UserID
+        JOIN activities AS act ON ua.ActivityID = act.ActivityID
 	WHERE 
-		u.UserID IN (SELECT User2 FROM connections AS cid WHERE cid.User1 = userMID))
+		u.UserID IN (SELECT User2 FROM connections AS cid WHERE cid.User1 = userMID)
+        AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID))
     UNION
     (SELECT
-		u.UserName, distance.Distance 
+		u.UserName, di.Distance, rl.Latitude, 
+        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
 	FROM 
 		usertable AS u
-        JOIN distance ON u.UserID = distance.UserID
+        JOIN recent_locations AS rl ON u.UserID = rl.UserID
+        JOIN distance AS di ON u.UserID = di.UserID
+        JOIN UserActivities AS ua ON u.UserID = ua.UserID
+        JOIN activities AS act ON ua.ActivityID = act.ActivityID
 	WHERE 
-		u.UserID IN (SELECT User1 FROM  connections AS cid WHERE cid.User2 = userMID));
+		u.UserID IN (SELECT User1 FROM  connections AS cid WHERE cid.User2 = userMID)
+        AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID));
     
 END$$
 DELIMITER ;
@@ -170,11 +180,13 @@ BEGIN
     SELECT UserID into userMID FROM usertable AS u WHERE u.UserName = uname;
 	SELECT
 		u.UserName, di.Distance, rl.Latitude, 
-        rl.Longitude, rl.Timestamp
+        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
 	FROM
 		usertable AS u
 		JOIN recent_locations AS rl ON u.UserID = rl.UserID
         JOIN distance AS di ON u.UserID = di.UserID
+        JOIN UserActivities AS ua ON u.UserID = ua.UserID
+        JOIN activities AS act ON ua.ActivityID = act.ActivityID
     WHERE 
 		u.UserName <> uname
 		AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID)
@@ -197,7 +209,9 @@ BEGIN
 					JOIN connectionReq ON connectionReq.connectorUser = usertable.UserID
 					WHERE usertable.UserID IN
 						(SELECT cReq.ConnectorUser from (SELECT * from connectionReq
-							WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq));
+							WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq))
+		ORDER BY 
+			u.UserID;
 END$$
 DELIMITER ;
 
@@ -214,13 +228,22 @@ DELIMITER $$
 CREATE DEFINER=`admin`@`%` PROCEDURE `incomingFriendRequests`(IN uname VARCHAR(255))
 BEGIN
 	
-	SELECT usertable.UserName, connectionReq.message from usertable 
-    
-    JOIN connectionReq ON connectionReq.connectorUser = usertable.UserID
-    
-    WHERE usertable.UserID IN
+	SELECT 
+		u.UserName, connectionReq.message, di.Distance, rl.Latitude, 
+        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
+	FROM
+		usertable AS u    
+		JOIN connectionReq ON connectionReq.connectorUser = u.UserID
+        JOIN recent_locations AS rl ON u.UserID = rl.UserID
+		JOIN distance AS di ON u.UserID = di.UserID
+        JOIN UserActivities AS ua ON u.UserID = ua.UserID
+        JOIN activities AS act ON ua.ActivityID = act.ActivityID
+        
+    WHERE 
+    u.UserID IN
 		(SELECT cReq.ConnectorUser from (SELECT * from connectionReq
-			WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq);
+			WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq)
+	AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID);
     
 END$$
 DELIMITER ;
@@ -275,7 +298,7 @@ END$$
 DELIMITER ;
 
 DELIMITER $$
-CREATE DEFINER=`admin`@`%` PROCEDURE `reviewFriend`(IN username VARCHAR(255), IN friendUsername VARCHAR(255), IN score VARCHAR(255))
+CREATE DEFINER=`admin`@`%` PROCEDURE `reviewFriend`(IN username VARCHAR(255), IN friendUsername VARCHAR(255), IN score DECIMAL(2,1))
 BEGIN
 	DECLARE User1ID INT DEFAULT 0;
 	DECLARE User2ID INT DEFAULT 0;
@@ -284,28 +307,41 @@ BEGIN
     SELECT UserID INTO User1ID from usertable where usertable.UserName = username;
     SELECT UserID INTO User2ID from usertable where usertable.UserName = friendUsername;
     
-    INSERT INTO userreview(UserReviewID, ReviewScore) 
-    VALUES ((maxR + 1),
-			score);
-    
-    INSERT INTO reviews(ReviewID, ReviewerID, RevieweeID)
-    VALUES((maxR + 1), User1ID, User2ID);
-    
-    
+    IF(score > 0 AND score <= 5.0) THEN    
+		INSERT INTO userreview(UserReviewID, ReviewScore, Timestamp) 
+		VALUES ((maxR + 1),
+				score, CURRENT_TIMESTAMP);
+		
+		INSERT INTO reviews(ReviewID, ReviewerID, RevieweeID)
+		VALUES((maxR + 1), User1ID, User2ID);
+	ELSE 
+    		SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid score entered';
+	END IF;
 END$$
 DELIMITER ;
 
 DELIMITER $$
 CREATE DEFINER=`admin`@`%` PROCEDURE `sendConnectionReq`(IN requestorUsername VARCHAR(255), IN recipientUsername VARCHAR(255), IN message VARCHAR(255))
 BEGIN
+
   	DECLARE User1ID INT DEFAULT 0;
 	DECLARE User2ID INT DEFAULT 0;
+    DECLARE ConnectionFound1 INT DEFAULT 0;
+    DECLARE ConnectionFound2 INT DEFAULT 0;
     SELECT UserID INTO User1ID from usertable where usertable.UserName = requestorUsername;
     SELECT UserID INTO User2ID from usertable where usertable.UserName = recipientUsername;
     
-    INSERT INTO connectionReq(ConnectorUser, ConnecteeUser, message)
-    VALUES (User1ID, User2ID, message);
-
+    SELECT count(*) INTO ConnectionFound1 FROM connectionReq AS cr WHERE (cr.ConnectorUser = User1ID AND cr.ConnecteeUser = User2ID);
+	SELECT count(*) INTO ConnectionFound2 FROM connectionReq AS cr WHERE (cr.ConnectorUser = User2ID AND cr.ConnecteeUser = User1ID);
+    
+    IF (ConnectionFound1 > 0 OR ConnectionFound2 > 0) THEN
+		SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Request already exists';
+	ELSE
+		INSERT INTO connectionReq(ConnectorUser, ConnecteeUser, message)
+		VALUES (User1ID, User2ID, message);
+	END IF;
 END$$
 DELIMITER ;
 
