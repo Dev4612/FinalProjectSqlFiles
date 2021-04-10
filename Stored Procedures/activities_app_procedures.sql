@@ -84,12 +84,31 @@ END$$
 DELIMITER ;
 
 DELIMITER $$
-CREATE DEFINER=`admin`@`%` PROCEDURE `DELETE_USER`()
+CREATE DEFINER=`admin`@`%` PROCEDURE `DELETE_USER`(IN adminUsername VARCHAR(255), IN usernameOfUserToDelete VARCHAR(255), IN reportRowPrimaryKey int )
 BEGIN
-#delete from : user(userid), reports(reporteduserid OR reporteeuserid), reportedusers(based on the reports(userreviewID) that was deleted),
-# Distance(userid), useractiviities(userid), reviews(rewieverid OR revieweeid), userreview(based on reviews(reviewID) find the uservewivewid)
-# sendconnectionrequest(connectoreuser OR conecteeuser), connectionrequest(based on sendconnection request SCRID), connections_cid(user1 OR user2) 
-# connections (based on CID from connections_CID)
+
+#user reviews
+delete r,ur from usertable as u join reviews as r on r.ReviewerID = u.UserID join userreview as ur on ur.UserReviewID = r.ReviewID where u.username = usernameOfUserToDelete;
+delete r,ur from usertable as u join reviews as r on r.RevieweeID = u.UserID join userreview as ur on ur.UserReviewID = r.ReviewID where u.username = usernameOfUserToDelete;
+
+#delete connection requests
+delete cr1 from usertable as u join connectionReq as cr1 on cr1.ConnectorUser = u.userID where u.username = usernameOfUserToDelete;
+delete cr2 from usertable as u join connectionReq as cr2 on cr2.ConnecteeUser = u.userID where u.username = usernameOfUserToDelete;
+
+#delete connections
+delete cc1 from usertable as u join connections as cc1 on cc1.User1 = u.userID where u.username = usernameOfUserToDelete;
+delete cc2 from usertable as u join connections as cc2 on cc2.User2 = u.userID where u.username = usernameOfUserToDelete;
+ 
+#reports and reportedusers (both reporter and reported)
+delete rp,ru from reports as rp natural join reportedusers as ru where rp.ReportedUserID = (select UserID from usertable where UserName = usernameOfUserToDelete)
+ or rp.ReporteeUserID = (select UserID from usertable where UserName = usernameOfUserToDelete);
+ 
+#usertable,distance,useractivities, recent locations
+delete from recent_locations where userID = (select UserID from usertable where UserName = usernameOfUserToDelete);
+delete from distance where userID = (select UserID from usertable where UserName = usernameOfUserToDelete);
+delete from UserActivities where userID = (select UserID from usertable where UserName = usernameOfUserToDelete);
+delete from usertable where UserName = usernameOfUserToDelete;
+
 END$$
 DELIMITER ;
 
@@ -111,13 +130,21 @@ END$$
 DELIMITER ;
 
 DELIMITER $$
+CREATE DEFINER=`admin`@`%` PROCEDURE `GET_RATING`(IN uname VARCHAR(255))
+BEGIN
+	select AVG(reviewScore) from reviews as r join userreview as ur on ReviewID = UserReviewID where RevieweeID = (select userId from usertable where username = uname);
+END$$
+DELIMITER ;
+
+DELIMITER $$
 CREATE DEFINER=`admin`@`%` PROCEDURE `GET_UNCHECKED_REPORTS`()
 BEGIN
 	select rd.ReportedID,u.username, TimesReported, rd.UserComments
-	from reportedusers as rd join reports as r on r.UserReportedID = rd.ReportedID
-    inner join (select UserReportedID,ReportedUserID,count(ReportedUserID) as TimesReported from reports group by ReportedUserID) as cnt on cnt.ReportedUserID = r.ReportedUserID
+	from reportedusers as rd natural join reports as r
+    inner join (select ReportedID,ReportedUserID,count(ReportedUserID) as TimesReported from reports group by ReportedUserID) as cnt on cnt.ReportedUserID = r.ReportedUserID
     join usertable as u on u.UserId = cnt.ReportedUserID
     WHERE AdminID IS NULL;
+    
 END$$
 DELIMITER ;
 
@@ -128,7 +155,7 @@ BEGIN
     SELECT UserID into userMID FROM usertable AS u WHERE u.UserName = uname;
     
     (SELECT 
-		u.UserName, di.Distance, rl.Latitude, 
+		u.UserName, u.FirstName, u.LastName, u.Age, u.PhoneNumber, u.About, di.Distance, rl.Latitude, 
         rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
 	FROM 
 		usertable AS u 
@@ -141,7 +168,7 @@ BEGIN
         AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID))
     UNION
     (SELECT
-		u.UserName, di.Distance, rl.Latitude, 
+		u.UserName, u.FirstName, u.LastName, u.Age, u.PhoneNumber, u.About, di.Distance, rl.Latitude, 
         rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
 	FROM 
 		usertable AS u
@@ -205,11 +232,23 @@ BEGIN
 				WHERE 
 					u.UserID IN (SELECT User1 FROM  connections AS cid WHERE cid.User2 = userMID)))
 		AND u.UserName NOT IN 
-					(SELECT usertable.UserName from usertable 
-					JOIN connectionReq ON connectionReq.connectorUser = usertable.UserID
-					WHERE usertable.UserID IN
-						(SELECT cReq.ConnectorUser from (SELECT * from connectionReq
-							WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq))
+					((SELECT 
+						u.UserName 
+					FROM 
+						usertable AS u
+					WHERE 
+						u.UserID IN (SELECT cReq.ConnecteeUser FROM connectionReq AS cReq WHERE cReq.ConnectorUser = UserMID))
+					UNION
+                    (SELECT 
+						u.UserName 
+					FROM 
+						usertable AS u
+					WHERE 
+						u.UserID IN (SELECT cReq.ConnectorUser FROM connectionReq AS cReq WHERE cReq.ConnecteeUser = UserMID)))
+                        
+                        
+					
+					
 		ORDER BY 
 			u.UserID;
 END$$
@@ -230,19 +269,20 @@ BEGIN
 	
 	SELECT 
 		u.UserName, connectionReq.message, di.Distance, rl.Latitude, 
-        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel
+        rl.Longitude, rl.Timestamp, act.Activity, ua.SkillLevel, connectionReq.conRID
 	FROM
-		usertable AS u    
-		JOIN connectionReq ON connectionReq.connectorUser = u.UserID
+		connectionReq -- , usertable AS u    
+ 		JOIN usertable as u ON connectionReq.connectorUser = u.UserID
         JOIN recent_locations AS rl ON u.UserID = rl.UserID
 		JOIN distance AS di ON u.UserID = di.UserID
         JOIN UserActivities AS ua ON u.UserID = ua.UserID
         JOIN activities AS act ON ua.ActivityID = act.ActivityID
         
     WHERE 
-    u.UserID IN
-		(SELECT cReq.ConnectorUser from (SELECT * from connectionReq
-			WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq)
+	connectionReq.ConnecteeUser = (SELECT UserID FROM usertable AS u WHERE u.UserName = uname)
+--    u.UserID IN (SELECT cReq.ConnectorUser from connectionReq AS cReq WHERE cReq.ConnecteeUser = (SELECT UserID FROM usertable AS u WHERE u.UserName = uname))
+-- 		(SELECT cReq.ConnectorUser from (SELECT * from connectionReq
+-- 			WHERE ConnecteeUser = (SELECT UserID from usertable where usertable.UserName = uname)) as cReq)
 	AND rl.Timestamp = (SELECT MAX(rl2.Timestamp) FROM recent_locations As rl2 WHERE rl2.UserID = rl.UserID);
     
 END$$
@@ -280,11 +320,15 @@ BEGIN
     SELECT UserID INTO User1ID from usertable where usertable.UserName = username;
     SELECT UserID INTO User2ID from usertable where usertable.UserName = reportedFriendUsername;
     
+	INSERT INTO reportedusers(ReportedID, ReportedDate, UserComments) 
+    VALUES ((maxRID + 1), CURRENT_TIMESTAMP, message);
+    
     INSERT INTO reports(ReportedID, ReportedUserID, ReporteeUserID)
     VALUES((maxRID + 1), User2ID, User1ID);
     
-    INSERT INTO reportedusers(ReportedID, ReportedDate, UserComments) 
-    VALUES ((maxRID + 1), CURRENT_TIMESTAMP, message);
+    DELETE FROM connections AS c 
+    WHERE 
+		(c.User1 = User1ID AND c.User2 = User2ID) OR (c.User1 = User2ID AND c.User2 = User1ID);
     
 END$$
 DELIMITER ;
